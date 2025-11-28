@@ -22,9 +22,42 @@ import sacrebleu
 from deep_translator import GoogleTranslator
 import pandas as pd
 from tqdm.auto import tqdm
+import os
+
+# Optional: Hugging Face authentication for gated datasets
+try:
+    from huggingface_hub import login
+    HF_HUB_AVAILABLE = True
+except ImportError:
+    HF_HUB_AVAILABLE = False
+    print("Note: huggingface_hub not installed. Install with: pip install huggingface_hub")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
+
+# Hugging Face authentication (optional - only needed for gated datasets like FLORES)
+hf_token = None
+if HF_HUB_AVAILABLE:
+    # Option 1: Use environment variable (recommended)
+    # Set HUGGING_FACE_HUB_TOKEN environment variable
+    hf_token = os.environ.get(
+        'HUGGING_FACE_HUB_TOKEN') or os.environ.get('HF_TOKEN')
+
+    if hf_token:
+        try:
+            login(token=hf_token)
+            print("✓ Authenticated with Hugging Face")
+        except Exception as e:
+            print(f"Note: Could not authenticate with Hugging Face: {e}")
+    else:
+        print(
+            "Note: No Hugging Face token found. FLORES dataset may require authentication.")
+        print("To access FLORES:")
+        print("  1. Get a token from https://huggingface.co/settings/tokens")
+        print("  2. Request access at https://huggingface.co/datasets/openlanguagedata/flores_plus")
+        print("  3. Set environment variable: export HUGGING_FACE_HUB_TOKEN='your_token'")
+else:
+    print("Note: huggingface_hub not available. FLORES dataset may require authentication.")
 
 """## 2. Evaluate a Baseline Model (NLLB-200)
 Model: `facebook/nllb-200-distilled-600M`
@@ -275,35 +308,41 @@ def compute_metrics(predictions, references):
 """
 
 # Load FLORES dataset for English-Russian
-# Note: If you get "Dataset scripts are no longer supported" error, you may need to:
-# Option 1: Downgrade datasets library: !pip install datasets==3.6.0
-# Option 2: Use trust_remote_code=True (tried below)
-# Option 3: Skip FLORES and use only custom dataset (which is fine for this task)
+# Note: FLORES is a gated dataset and requires Hugging Face authentication
+# If authentication fails, the script will continue with custom dataset only (which is sufficient)
 
 dataset_flores = None
 
 try:
-    # Method 1: Try with trust_remote_code=True (for newer datasets library)
+    # Method 1: Try facebook/flores (non-gated version if available)
     dataset_flores = load_dataset(
         "facebook/flores", "eng-rus", split="devtest", trust_remote_code=True)
-    print("Loaded FLORES from facebook/flores with trust_remote_code")
+    print("✓ Loaded FLORES from facebook/flores")
 except Exception as e1:
     try:
         # Method 2: Try without trust_remote_code
         dataset_flores = load_dataset(
             "facebook/flores", "eng-rus", split="devtest")
-        print("Loaded FLORES from facebook/flores")
+        print("✓ Loaded FLORES from facebook/flores")
     except Exception as e2:
         try:
-            # Method 3: Try openlanguagedata/flores_plus
+            # Method 3: Try openlanguagedata/flores_plus (gated - requires auth)
+            # This will work if you've authenticated with Hugging Face
+            load_kwargs = {"trust_remote_code": True}
+            if hf_token:
+                load_kwargs["token"] = hf_token
             dataset_flores = load_dataset(
-                "openlanguagedata/flores_plus", "eng_rus_Cyrl", split="devtest", trust_remote_code=True)
-            print("Loaded FLORES with eng_rus_Cyrl config")
+                "openlanguagedata/flores_plus", "eng_rus_Cyrl", split="devtest", **load_kwargs)
+            print("✓ Loaded FLORES with eng_rus_Cyrl config")
         except Exception as e3:
-            print(f"Could not load FLORES dataset. Error: {e3}")
-            print("\nNote: FLORES dataset loading may require:")
-            print("  1. Downgrading datasets: !pip install datasets==3.6.0")
-            print("  2. Or using a different dataset source")
+            print(f"\n⚠ Could not load FLORES dataset. Error: {e3}")
+            print(
+                "\nNote: FLORES dataset is gated and requires Hugging Face authentication.")
+            print("To access FLORES:")
+            print("  1. Get a token from https://huggingface.co/settings/tokens")
+            print("  2. Request access to the dataset at https://huggingface.co/datasets/openlanguagedata/flores_plus")
+            print(
+                "  3. Set environment variable: export HUGGING_FACE_HUB_TOKEN='your_token'")
             print(
                 "\nContinuing with custom dataset only (this is sufficient for the task).")
             dataset_flores = None
