@@ -326,14 +326,14 @@ except Exception as e1:
         print("✓ Loaded FLORES from facebook/flores")
     except Exception as e2:
         try:
-            # Method 3: Try openlanguagedata/flores_plus (gated - requires auth)
-            # This will work if you've authenticated with Hugging Face
+            # Method 3: Try openlanguagedata/flores_plus with 'default' config
+            # FLORES has columns for each language (eng_Latn, rus_Cyrl, etc.)
             load_kwargs = {"trust_remote_code": True}
             if hf_token:
                 load_kwargs["token"] = hf_token
             dataset_flores = load_dataset(
-                "openlanguagedata/flores_plus", "eng_rus_Cyrl", split="devtest", **load_kwargs)
-            print("✓ Loaded FLORES with eng_rus_Cyrl config")
+                "openlanguagedata/flores_plus", "default", split="devtest", **load_kwargs)
+            print("✓ Loaded FLORES with default config")
         except Exception as e3:
             print(f"\n⚠ Could not load FLORES dataset. Error: {e3}")
             print(
@@ -349,21 +349,46 @@ except Exception as e1:
 
 # If we have FLORES data, extract English and Russian sentences
 if dataset_flores is not None:
-    # FLORES structure may vary, adjust based on actual structure
-    if 'sentence_eng' in dataset_flores.column_names:
-        flores_en = dataset_flores['sentence_eng']
-        flores_ru = dataset_flores['sentence_rus']
-    elif 'sentence' in dataset_flores.column_names:
-        # May need to check which column is which
-        # Adjust based on actual structure
+    # FLORES structure: columns are named by language code (eng_Latn, rus_Cyrl, etc.)
+    cols = list(dataset_flores.column_names)
+    print(f"FLORES columns available: {cols[:10]}...")  # Show first 10
+
+    # Look for English and Russian columns
+    if 'eng_Latn' in cols and 'rus_Cyrl' in cols:
+        # FLORES format: eng_Latn and rus_Cyrl columns
+        flores_en = dataset_flores['eng_Latn']
+        flores_ru = dataset_flores['rus_Cyrl']
+        print("✓ Using eng_Latn and rus_Cyrl columns")
+    elif 'sentence_eng_Latn' in cols or 'sentence_eng' in cols:
+        # Alternative format with sentence_ prefix
+        flores_en = dataset_flores.get(
+            'sentence_eng_Latn') or dataset_flores.get('sentence_eng')
+        flores_ru = dataset_flores.get(
+            'sentence_rus_Cyrl') or dataset_flores.get('sentence_rus')
+        print("✓ Using sentence_eng and sentence_rus columns")
+    elif 'sentence' in cols:
+        # Another alternative format
         flores_en = dataset_flores['sentence']
-        # Adjust based on actual structure
         flores_ru = dataset_flores['translation']
+        print("✓ Using sentence and translation columns")
     else:
-        # Try to get first two columns
-        cols = dataset_flores.column_names
-        flores_en = dataset_flores[cols[0]]
-        flores_ru = dataset_flores[cols[1]]
+        # Try to find English and Russian columns by name pattern
+        eng_col = None
+        rus_col = None
+        for col in cols:
+            if ('eng' in col.lower() or 'english' in col.lower()) and eng_col is None:
+                eng_col = col
+            if ('rus' in col.lower() or 'russian' in col.lower()) and rus_col is None:
+                rus_col = col
+
+        if eng_col and rus_col:
+            flores_en = dataset_flores[eng_col]
+            flores_ru = dataset_flores[rus_col]
+            print(f"✓ Using columns: {eng_col} (EN) and {rus_col} (RU)")
+        else:
+            print(
+                f"⚠ Could not find English/Russian columns. Available: {cols[:20]}")
+            dataset_flores = None
 
     # Limit to first 100 sentences for faster evaluation (or use all)
     eval_size = min(100, len(flores_en))
