@@ -353,49 +353,98 @@ if dataset_flores is not None:
     cols = list(dataset_flores.column_names)
     print(f"FLORES columns available: {cols[:10]}...")  # Show first 10
 
-    # Look for English and Russian columns
-    if 'eng_Latn' in cols and 'rus_Cyrl' in cols:
-        # FLORES format: eng_Latn and rus_Cyrl columns
-        flores_en = dataset_flores['eng_Latn']
-        flores_ru = dataset_flores['rus_Cyrl']
-        print("✓ Using eng_Latn and rus_Cyrl columns")
-    elif 'sentence_eng_Latn' in cols or 'sentence_eng' in cols:
-        # Alternative format with sentence_ prefix
-        flores_en = dataset_flores.get(
-            'sentence_eng_Latn') or dataset_flores.get('sentence_eng')
-        flores_ru = dataset_flores.get(
-            'sentence_rus_Cyrl') or dataset_flores.get('sentence_rus')
-        print("✓ Using sentence_eng and sentence_rus columns")
-    elif 'sentence' in cols:
-        # Another alternative format
-        flores_en = dataset_flores['sentence']
-        flores_ru = dataset_flores['translation']
-        print("✓ Using sentence and translation columns")
-    else:
-        # Try to find English and Russian columns by name pattern
-        eng_col = None
-        rus_col = None
-        for col in cols:
-            if ('eng' in col.lower() or 'english' in col.lower()) and eng_col is None:
-                eng_col = col
-            if ('rus' in col.lower() or 'russian' in col.lower()) and rus_col is None:
-                rus_col = col
+    # Check if this is the new FLORES structure with language metadata
+    if 'text' in cols and ('iso_639_3' in cols or 'iso_15924' in cols):
+        # New FLORES structure: filter by language codes
+        print("Detected new FLORES structure with language metadata")
 
-        if eng_col and rus_col:
-            flores_en = dataset_flores[eng_col]
-            flores_ru = dataset_flores[rus_col]
-            print(f"✓ Using columns: {eng_col} (EN) and {rus_col} (RU)")
+        try:
+            # Convert to pandas for easier filtering
+            df_flores = dataset_flores.to_pandas()
+
+            # Filter English sentences (eng_Latn -> iso_639_3='eng' and iso_15924='Latn')
+            # Filter Russian sentences (rus_Cyrl -> iso_639_3='rus' and iso_15924='Cyrl')
+            if 'iso_639_3' in cols and 'iso_15924' in cols:
+                eng_mask = (df_flores['iso_639_3'] == 'eng') & (
+                    df_flores['iso_15924'] == 'Latn')
+                rus_mask = (df_flores['iso_639_3'] == 'rus') & (
+                    df_flores['iso_15924'] == 'Cyrl')
+            elif 'iso_639_3' in cols:
+                eng_mask = df_flores['iso_639_3'] == 'eng'
+                rus_mask = df_flores['iso_639_3'] == 'rus'
+            else:
+                raise ValueError(
+                    "Cannot determine language from available columns")
+
+            flores_en_df = df_flores[eng_mask].sort_values(
+                'id') if 'id' in cols else df_flores[eng_mask]
+            flores_ru_df = df_flores[rus_mask].sort_values(
+                'id') if 'id' in cols else df_flores[rus_mask]
+
+            # Align by id to ensure parallel sentences
+            if 'id' in cols:
+                # Merge on id to get parallel sentences
+                merged = pd.merge(flores_en_df, flores_ru_df,
+                                  on='id', suffixes=('_en', '_ru'))
+                flores_en = merged['text_en'].tolist()
+                flores_ru = merged['text_ru'].tolist()
+            else:
+                # Just take first N of each, assuming they're aligned
+                min_len = min(len(flores_en_df), len(flores_ru_df))
+                flores_en = flores_en_df['text'].head(min_len).tolist()
+                flores_ru = flores_ru_df['text'].head(min_len).tolist()
+
+            print(
+                f"✓ Extracted {len(flores_en)} parallel English-Russian sentence pairs")
+        except Exception as e:
+            print(f"⚠ Error processing FLORES structure: {e}")
+            print("Trying alternative approach...")
+            dataset_flores = None
+
+    # Fallback: Check for direct language columns (old structure)
+    flores_extracted = False
+    if dataset_flores is not None:
+        try:
+            # Check if flores_en was already extracted
+            flores_en
+            flores_extracted = True
+        except NameError:
+            flores_extracted = False
+
+    if dataset_flores is not None and not flores_extracted:
+        if 'eng_Latn' in cols and 'rus_Cyrl' in cols:
+            flores_en = dataset_flores['eng_Latn']
+            flores_ru = dataset_flores['rus_Cyrl']
+            print("✓ Using eng_Latn and rus_Cyrl columns")
+        elif 'sentence_eng_Latn' in cols or 'sentence_eng' in cols:
+            flores_en = dataset_flores.get(
+                'sentence_eng_Latn') or dataset_flores.get('sentence_eng')
+            flores_ru = dataset_flores.get(
+                'sentence_rus_Cyrl') or dataset_flores.get('sentence_rus')
+            print("✓ Using sentence_eng and sentence_rus columns")
+        elif 'sentence' in cols:
+            flores_en = dataset_flores['sentence']
+            flores_ru = dataset_flores['translation']
+            print("✓ Using sentence and translation columns")
         else:
             print(
-                f"⚠ Could not find English/Russian columns. Available: {cols[:20]}")
+                f"⚠ Could not extract English/Russian sentences. Available columns: {cols[:20]}")
             dataset_flores = None
 
     # Limit to first 100 sentences for faster evaluation (or use all)
-    eval_size = min(100, len(flores_en))
-    flores_en_eval = flores_en[:eval_size]
-    flores_ru_eval = flores_ru[:eval_size]
-
-    print(f"Evaluating on {eval_size} FLORES sentences")
+    if dataset_flores is not None:
+        try:
+            # Check if variables exist
+            _ = flores_en
+            _ = flores_ru
+            eval_size = min(100, len(flores_en))
+            flores_en_eval = flores_en[:eval_size]
+            flores_ru_eval = flores_ru[:eval_size]
+            print(f"Evaluating on {eval_size} FLORES sentences")
+        except NameError:
+            print(
+                "FLORES dataset not loaded or extraction failed. Skipping FLORES evaluation.")
+            dataset_flores = None
 
     # Evaluate NLLB on FLORES
     print("\n=== Evaluating NLLB on FLORES ===")
